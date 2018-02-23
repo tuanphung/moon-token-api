@@ -15,7 +15,7 @@ module.exports = function (app) {
       return web3.eth.personal.newAccount(password)  
     })
     .then( (result) => {
-      web3.eth.sendTransaction({from: web3.eth.coinbase, to: result, value: '1000000000000000000'})
+      web3.eth.sendTransaction({from: web3.eth.coinbase, to: result, value: '100000000000000000'})
       res.send({
         success: true,
         address: result
@@ -116,6 +116,8 @@ module.exports = function (app) {
 
 	// Slack
   app.post('/slack_command', (req, res) => {
+    console.log(req.body)
+    
       var user_id = req.body.user_id;
       var text = req.body.text
 
@@ -192,23 +194,28 @@ module.exports = function (app) {
       return Promise.resolve(accounts[user_id])
     }
 
-    return web3.eth.personal.unlockAccount(web3.eth.coinbase, '111')
-    .then( result => {
-      return web3.eth.personal.newAccount('111')  
-    })
-    .then( (result) => {
-      accounts[user_id] = result;
+    return saveAccount(web3.eth.accounts.create())
+    .then( (account) => {
+
+      accounts[user_id] = account.address;
       syncAccounts()
 
       // Add ETH for further transactions
-      web3.eth.sendTransaction({from: web3.eth.coinbase, to: result, value: '1000000000000000000'})
+      contract.methods.approve(account.address, 10000).send({
+        from: web3.eth.coinbase, 
+        gas: 2000000,
+      });
 
-      // Add moon token to address
-      contract.methods.approve(result, 10000).send()
-      .on('transactionHash', function(hash){
-      })
+      setTimeout( () => {
+        web3.eth.sendTransaction({
+          from: web3.eth.coinbase, 
+          to: account.address, 
+          value: '100000000000000000',
+          gas: 2000000,
+        });
+      }, 30000)
 
-      return Promise.resolve(result)
+      return Promise.resolve(account.address)
     })
   }
 
@@ -222,6 +229,7 @@ module.exports = function (app) {
         "balance": results[1],
         "eth": results[2]
       })
+
     })
   }
 
@@ -229,10 +237,10 @@ module.exports = function (app) {
     var from_address = accounts[from_user_id];
     var to_address = accounts[to_user_id];
 
-    return web3.eth.personal.unlockAccount(from_address, '111')
+    return unlockAccount(from_address, '111')
     .then(function(result){
       return new Promise( (resolve, reject) => {
-        contract.methods.transferFrom(web3.eth.coinbase, to_address, amount).send({from: from_address})
+        contract.methods.transferFrom(web3.eth.coinbase, to_address, amount).send({from: from_address, gas: 2000000})
         .on('transactionHash', function(hash){
             resolve(hash)
         })
@@ -240,6 +248,46 @@ module.exports = function (app) {
           console.log(confirmationNumber)
           console.log(receipt)
         })
+      })
+    })
+  }
+
+  function saveAccount(account) {
+    return new Promise((resolve, reject) => {
+      var json = web3.eth.accounts.encrypt(account.privateKey, '111');
+
+      var fs = require('fs');
+      var path = './keystore/' + account.address;
+      fs.writeFile(path, JSON.stringify(json), function(err) {
+          if(err) {
+              console.log(err);
+              reject(err);
+              return
+          }
+
+          resolve(account)
+      });
+    })
+  }
+
+  function unlockAccount(address, password) {
+    // Check if address is inside wallet
+    web3.eth.accounts.wallet.remove(address)
+
+    return new Promise( (resolve, reject) => {
+      var fs = require('fs');
+      var path = './keystore/' + address.toString();
+
+      fs.readFile(path, 'utf8', (err, data) => {
+        if (err) {
+          reject(false)
+          return;
+        }
+        var json = JSON.parse(data);
+        var account = web3.eth.accounts.decrypt(json, '111');
+
+        web3.eth.accounts.wallet.add(account)
+        resolve(true)
       })
     })
   }
